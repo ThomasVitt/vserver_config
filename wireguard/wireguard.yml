@@ -14,6 +14,9 @@
     # Peers: public_key per `wg genkey | tee priv | wg pubkey` auf dem Client erzeugen
     # TCP-Ports, die in iptables erlaubt werden (SSH, HTTP, HTTPS)
     wg_allowed_tcp_ports: [22, 80, 443]
+    # wireguard-go Logging (nur im Userspace-Modus): verbose zeigt Handshakes aller Peers
+    wg_go_log_level: verbose   # verbose | error | silent
+    wg_go_log_file: /var/log/wireguard-go.log
     wg_peers:
       - name: macbook
         public_key: "L0DOJWsfHs/snFXXgb6X9w9TkzTi3fIA2uLXVUEizjo="
@@ -102,16 +105,54 @@
         mode: "0755"
       when: wg_userspace
 
-    - name: wg-quick auf wireguard-go umstellen
+    - name: Wrapper für wireguard-go mit Logging installieren
+      ansible.builtin.copy:
+        dest: /usr/local/bin/wireguard-go-logged
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          # Startet wireguard-go im Vordergrund (-f), aber im Hintergrund der Shell,
+          # und schreibt alle Meldungen in {{ wg_go_log_file }} und ins Journal (Tag wireguard-go).
+          iface="$1"
+          export LOG_LEVEL="{{ wg_go_log_level }}"
+          setsid bash -c '/usr/bin/wireguard-go -f "$0" 2>&1 | tee -a "{{ wg_go_log_file }}" | logger -t wireguard-go' "$iface" </dev/null >/dev/null 2>&1 &
+          # warten, bis Interface und Control-Socket da sind, damit wg-quick weitermachen kann
+          for _ in $(seq 1 100); do
+            if ip link show "$iface" >/dev/null 2>&1 && [ -S "/var/run/wireguard/$iface.sock" ]; then
+              exit 0
+            fi
+            sleep 0.1
+          done
+          echo "wireguard-go: Interface $iface nicht bereit, siehe {{ wg_go_log_file }}" >&2
+          exit 1
+      when: wg_userspace
+      notify: Restart WireGuard
+
+    - name: wg-quick auf den Wrapper umstellen
       ansible.builtin.copy:
         dest: "/etc/systemd/system/wg-quick@{{ wg_interface }}.service.d/userspace.conf"
         content: |
           [Service]
-          Environment=WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
+          Environment=WG_QUICK_USERSPACE_IMPLEMENTATION=/usr/local/bin/wireguard-go-logged
           Environment=WG_SUDO=1
         mode: "0644"
       when: wg_userspace
       notify: Restart WireGuard
+
+    - name: Logrotate für wireguard-go
+      ansible.builtin.copy:
+        dest: /etc/logrotate.d/wireguard-go
+        mode: "0644"
+        content: |
+          {{ wg_go_log_file }} {
+              weekly
+              rotate 8
+              compress
+              missingok
+              notifempty
+              copytruncate
+          }
+      when: wg_userspace
 
     - name: Eingehende TCP-Ports 22, 80 und 443 in iptables erlauben
       ansible.builtin.iptables:
