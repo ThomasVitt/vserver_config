@@ -1,0 +1,12 @@
+# WireGuard-App auf dem MacBook (Tunnel importieren)
+[Interface]
+Address = 10.8.0.2/24
+PrivateKey = <PRIVATE_KEY_DES_MACBOOK>
+
+[Peer]
+# vServer
+PublicKey = <PUBLIC_KEY_DES_SERVERS>
+Endpoint = vpn.tvitt.de:51820
+# nur das VPN-Netz durch den Tunnel, sonstiger Traffic bleibt normal
+AllowedIPs = 10.8.0.0/24
+PersistentKeepalive = 25

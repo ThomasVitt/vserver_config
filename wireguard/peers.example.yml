@@ -1,0 +1,9 @@
+# Kopieren nach peers.yml, Public Keys eintragen, dann:
+#   ansible-playbook -i inventory.ini wireguard.yml -e @peers.yml
+wg_peers:
+  - name: macbook
+    public_key: "<PUBLIC_KEY_DES_MACBOOK>"
+    allowed_ips: 10.8.0.2/32
+  - name: raspberrypi-homeassistant
+    public_key: "<PUBLIC_KEY_DES_PI>"
+    allowed_ips: 10.8.0.3/32
