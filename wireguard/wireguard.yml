@@ -1,6 +1,7 @@
 ---
 - name: WireGuard-Server auf Ubuntu 24.04 einrichten
   hosts: wireguard
+  connection: local
   become: true
 
   vars:
@@ -13,10 +14,10 @@
     # Peers: public_key per `wg genkey | tee priv | wg pubkey` auf dem Client erzeugen
     # TCP-Ports, die in iptables erlaubt werden (SSH, HTTP, HTTPS)
     wg_allowed_tcp_ports: [22, 80, 443]
-    wg_peers: []
-    #  - name: laptop
-    #    public_key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx="
-    #    allowed_ips: 10.8.0.2/32
+    wg_peers:
+      - name: macbook
+        public_key: "L0DOJWsfHs/snFXXgb6X9w9TkzTi3fIA2uLXVUEizjo="
+        allowed_ips: 10.8.0.2/32
 
   tasks:
     - name: WireGuard installieren
