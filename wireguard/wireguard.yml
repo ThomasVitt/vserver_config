@@ -29,6 +29,34 @@
         update_cache: true
         cache_valid_time: 3600
 
+    # Erst alle ACCEPT-Regeln anlegen, die Default-Policy DROP folgt ganz am Ende
+    - name: Loopback-Verkehr erlauben
+      ansible.builtin.iptables:
+        chain: INPUT
+        in_interface: lo
+        jump: ACCEPT
+        action: insert
+        rule_num: "1"
+        comment: "Allow loopback"
+
+    - name: Bestehende Verbindungen erlauben (hält laufende SSH-Session offen)
+      ansible.builtin.iptables:
+        chain: INPUT
+        ctstate: [ESTABLISHED, RELATED]
+        jump: ACCEPT
+        action: insert
+        rule_num: "1"
+        comment: "Allow established"
+
+    - name: ICMP (Ping) erlauben
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: icmp
+        jump: ACCEPT
+        action: insert
+        rule_num: "1"
+        comment: "Allow icmp"
+
     - name: Eingehende TCP-Ports 22, 80 und 443 in iptables erlauben
       ansible.builtin.iptables:
         chain: INPUT
@@ -40,6 +68,16 @@
         rule_num: "1"
         comment: "Allow tcp/{{ item }}"
       loop: "{{ wg_allowed_tcp_ports }}"
+
+    - name: WireGuard-UDP-Port erlauben
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: udp
+        destination_port: "{{ wg_port | string }}"
+        jump: ACCEPT
+        action: insert
+        rule_num: "1"
+        comment: "Allow WireGuard"
 
     - name: Externes Interface ermitteln
       ansible.builtin.set_fact:
@@ -103,6 +141,18 @@
         name: "wg-quick@{{ wg_interface }}"
         enabled: true
         state: started
+
+    # Policy erst nach allen Accept-Regeln und nach dem Start von WireGuard
+    # (dessen PostUp legt die FORWARD-Regeln an). Nicht persistent: nach Reboot Default ACCEPT.
+    - name: Default-Policy INPUT auf DROP setzen
+      ansible.builtin.iptables:
+        chain: INPUT
+        policy: DROP
+
+    - name: Default-Policy FORWARD auf DROP setzen
+      ansible.builtin.iptables:
+        chain: FORWARD
+        policy: DROP
 
     - name: Public Key des Servers anzeigen
       ansible.builtin.debug:
