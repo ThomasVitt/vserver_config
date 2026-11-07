@@ -1,6 +1,6 @@
 # WireGuard: MacBook -> vServer -> Home Assistant
 
-Netz: vServer 10.8.0.1, MacBook 10.8.0.2, Raspberry Pi 10.8.0.3 (VPN 10.8.0.0/24).
+Netz: vServer 10.8.0.1, MacBook 10.8.0.2, iPhone 10.8.0.3 (VPN 10.8.0.0/24).
 Home Assistant: http://10.8.0.3:8123 (Pi baut die Verbindung nach aussen auf, kein Port-Forwarding noetig).
 
 ## Schritte
