@@ -18,6 +18,12 @@
       - name: macbook
         public_key: "L0DOJWsfHs/snFXXgb6X9w9TkzTi3fIA2uLXVUEizjo="
         allowed_ips: 10.8.0.2/32
+      - name: thomas-iphone
+        public_key: "UZUVIQ37vuri1kPzv07IJOQonV8pSlRSJZT3ZLZvUQE="
+        allowed_ips: 10.8.0.3/32
+
+
+        
 
   tasks:
     - name: WireGuard installieren
