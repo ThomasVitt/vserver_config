@@ -57,6 +57,55 @@
         rule_num: "1"
         comment: "Allow icmp"
 
+    # Auf OpenVZ/LXC fehlt das Kernel-Modul: dann Userspace-Implementierung wireguard-go
+    - name: Prüfen, ob der Kernel WireGuard unterstützt
+      ansible.builtin.shell: |
+        ip link add wgprobe0 type wireguard && ip link delete wgprobe0
+      register: wg_kernel_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Userspace-Modus festlegen
+      ansible.builtin.set_fact:
+        wg_userspace: "{{ wg_kernel_probe.rc != 0 }}"
+
+    - name: wireguard-go installieren (Userspace-Fallback)
+      ansible.builtin.apt:
+        name: wireguard-go
+        state: present
+      when: wg_userspace
+
+    - name: /dev/net/tun prüfen (für wireguard-go zwingend)
+      ansible.builtin.stat:
+        path: /dev/net/tun
+      register: wg_tun
+      when: wg_userspace
+
+    - name: Abbrechen, wenn TUN fehlt
+      ansible.builtin.fail:
+        msg: >-
+          Kein Kernel-WireGuard und kein /dev/net/tun. Beim Anbieter (OpenVZ)
+          TUN/TAP aktivieren lassen, danach das Playbook erneut ausführen.
+      when: wg_userspace and not wg_tun.stat.exists
+
+    - name: systemd-Drop-in-Verzeichnis für wg-quick anlegen
+      ansible.builtin.file:
+        path: "/etc/systemd/system/wg-quick@{{ wg_interface }}.service.d"
+        state: directory
+        mode: "0755"
+      when: wg_userspace
+
+    - name: wg-quick auf wireguard-go umstellen
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/wg-quick@{{ wg_interface }}.service.d/userspace.conf"
+        content: |
+          [Service]
+          Environment=WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
+          Environment=WG_SUDO=1
+        mode: "0644"
+      when: wg_userspace
+      notify: Restart WireGuard
+
     - name: Eingehende TCP-Ports 22, 80 und 443 in iptables erlauben
       ansible.builtin.iptables:
         chain: INPUT
@@ -141,6 +190,7 @@
         name: "wg-quick@{{ wg_interface }}"
         enabled: true
         state: started
+        daemon_reload: true
 
     # Policy erst nach allen Accept-Regeln und nach dem Start von WireGuard
     # (dessen PostUp legt die FORWARD-Regeln an). Nicht persistent: nach Reboot Default ACCEPT.
