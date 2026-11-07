@@ -11,6 +11,8 @@
     # Netzwerkinterface mit Internetzugang (leer = automatisch ermitteln)
     wg_external_interface: ""
     # Peers: public_key per `wg genkey | tee priv | wg pubkey` auf dem Client erzeugen
+    # TCP-Ports, die in iptables erlaubt werden (SSH, HTTP, HTTPS)
+    wg_allowed_tcp_ports: [22, 80, 443]
     wg_peers: []
     #  - name: laptop
     #    public_key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx="
@@ -26,6 +28,18 @@
         state: present
         update_cache: true
         cache_valid_time: 3600
+
+    - name: Eingehende TCP-Ports 22, 80 und 443 in iptables erlauben
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ item }}"
+        ctstate: NEW
+        jump: ACCEPT
+        action: insert
+        rule_num: "1"
+        comment: "Allow tcp/{{ item }}"
+      loop: "{{ wg_allowed_tcp_ports }}"
 
     - name: Externes Interface ermitteln
       ansible.builtin.set_fact:
