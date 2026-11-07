@@ -1,12 +1,14 @@
-# /etc/wireguard/wg0.conf auf dem Raspberry Pi (Home Assistant)
+# Config zum Import in die FRITZ!Box 5G (Internet > Freigaben > VPN (WireGuard)
+# > Verbindung hinzufuegen > Netzwerke verbinden). Dateiname z.B. vserver.conf
 [Interface]
-Address = 10.8.0.3/24
-PrivateKey = <PRIVATE_KEY_DES_PI>
+PrivateKey = <PRIVATE_KEY_DER_FRITZBOX>
+Address = 10.8.0.4/32
 
 [Peer]
 # vServer
 PublicKey = <PUBLIC_KEY_DES_SERVERS>
 Endpoint = vpn.tvitt.de:51820
+# Gegenstelle ist das VPN-Netz
 AllowedIPs = 10.8.0.0/24
-# haelt die Verbindung durch NAT/CGNAT der 5G-FritzBox offen
+# haelt die Verbindung durch das CGNAT der 5G-Anbindung offen
 PersistentKeepalive = 25
