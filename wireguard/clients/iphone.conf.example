@@ -1,7 +1,7 @@
 # WireGuard-App auf dem iPhone (Tunnel anlegen)
 [Interface]
 Address = 10.8.0.3/24
-PrivateKey = <PRIVATE_KEY_DES_MACBOOK>
+PrivateKey = <PRIVATE_KEY_DES_IPHONE>
 
 [Peer]
 # vServer
