@@ -27,6 +27,9 @@
       - name: fritzbox5g
         public_key: "JupUhk2lg9PzwuMAVBRZdvDI4hIQHSpqVqDk71riI1s="
         allowed_ips: 10.8.0.4/32, 192.168.170.0/24
+      - name: rasp-pi-4
+        public_key: "X+51/P//phhwE9OqEwbZWAAi/C+ag98KBeRNrTOw5WU="
+        allowed_ips: 10.8.0.5/32
 
   tasks:
     - name: WireGuard installieren
