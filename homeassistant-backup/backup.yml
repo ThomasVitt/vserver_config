@@ -1,143 +1,173 @@
 ---
-# Samba-Freigabe auf dem vServer als Backup-Ziel ("Netzwerkspeicher") fuer Home Assistant OS.
-# Nur ueber das WireGuard-VPN erreichbar: Samba bindet nur an wg0, iptables erlaubt 445 nur auf wg0.
+# SFTP-Backup-Ziel auf dem vServer fuer Home Assistant (Integration "SFTP Storage").
+# - eigener Benutzer, nur SFTP (keine Shell, kein Forwarding), per Chroot eingesperrt
+# - nur Schluessel-Login, Schluessel gilt nur aus VPN und Stallnetz (from=...)
 #
 # Ausfuehren (auf dem vServer):
 #   ansible-playbook -i ../wireguard/inventory.ini backup.yml
-# Das Samba-Passwort wird abgefragt (oder: -e backup_password=...).
-- name: Backup-Ziel (Samba) fuer Home Assistant einrichten
+- name: SFTP-Backup-Ziel fuer Home Assistant einrichten
   hosts: wireguard
   connection: local
   become: true
 
-  vars_prompt:
-    - name: backup_password
-      prompt: "Samba-Passwort fuer den Backup-Benutzer"
-      private: true
-      confirm: true
-
   vars:
-    wg_interface: wg0
     backup_user: habackup
-    backup_share: habackup
-    backup_path: /srv/backup/homeassistant
-    # Netze, die zugreifen duerfen: VPN + Stall-Netz (je nachdem, ob der Pi NAT macht,
-    # kommt Home Assistant mit 10.8.0.x oder mit seiner 192.168.170.x-Adresse an)
+    # Chroot-Verzeichnis (muss root gehoeren); darin "backups" fuer den Benutzer
+    backup_chroot: /srv/backup/homeassistant
+    backup_dir_name: backups
+    # Netze, aus denen der Schluessel funktioniert. Home Assistant kommt je nach NAT des Pi
+    # mit 10.8.0.x oder mit seiner 192.168.170.x-Adresse an.
     backup_allowed_networks:
       - 10.8.0.0/24
       - 192.168.170.0/24
-    # true = Passwort eines bestehenden Samba-Benutzers neu setzen
-    backup_reset_password: false
+    # Schluesselpaar wird auf dem vServer erzeugt; den Private Key in Home Assistant hochladen
+    # und danach hier loeschen. Alternativ eigenen Public Key setzen: -e backup_public_key="ssh-ed25519 ..."
+    backup_key_dir: /root/ha-backup-key
+    backup_public_key: ""
 
   tasks:
-    - name: Samba installieren
+    - name: OpenSSH-Server installieren
       ansible.builtin.apt:
-        name: samba
+        name: openssh-server
         state: present
         update_cache: true
         cache_valid_time: 3600
 
-    - name: Systembenutzer fuer Backups anlegen (kein Login)
+    # '*' statt gesperrtem Passwort: kein Passwort-Login moeglich, Schluessel-Login aber erlaubt
+    - name: Systembenutzer fuer Backups anlegen (keine Shell, kein Passwort)
       ansible.builtin.user:
         name: "{{ backup_user }}"
         system: true
         shell: /usr/sbin/nologin
+        home: "{{ backup_chroot }}"
         create_home: false
+        password: "*"
 
-    - name: Backup-Verzeichnis anlegen
+    - name: Chroot-Verzeichnis anlegen (root-eigen, Pflicht fuer ChrootDirectory)
       ansible.builtin.file:
-        path: "{{ backup_path }}"
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - /srv/backup
+        - "{{ backup_chroot }}"
+
+    - name: Beschreibbares Backup-Verzeichnis anlegen
+      ansible.builtin.file:
+        path: "{{ backup_chroot }}/{{ backup_dir_name }}"
         state: directory
         owner: "{{ backup_user }}"
         group: "{{ backup_user }}"
         mode: "0700"
 
-    - name: Samba konfigurieren
-      ansible.builtin.template:
-        src: smb.conf.j2
-        dest: /etc/samba/smb.conf
+    - name: Verzeichnis fuer das Schluesselpaar anlegen
+      ansible.builtin.file:
+        path: "{{ backup_key_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: backup_public_key | length == 0
+
+    # Home Assistant verlangt einen Schluessel ohne Passphrase
+    - name: Schluesselpaar erzeugen (nur falls nicht vorhanden)
+      ansible.builtin.command: >-
+        ssh-keygen -t ed25519 -N "" -C "homeassistant-backup"
+        -f {{ backup_key_dir }}/id_ed25519
+      args:
+        creates: "{{ backup_key_dir }}/id_ed25519.pub"
+      when: backup_public_key | length == 0
+
+    - name: Erzeugten Public Key einlesen
+      ansible.builtin.slurp:
+        src: "{{ backup_key_dir }}/id_ed25519.pub"
+      register: backup_generated_pub
+      when: backup_public_key | length == 0
+
+    - name: Zu verwendenden Public Key festlegen
+      ansible.builtin.set_fact:
+        backup_pub: >-
+          {{ backup_public_key if backup_public_key | length > 0
+             else (backup_generated_pub.content | b64decode | trim) }}
+
+    # authorized_keys ausserhalb des Chroot, root-eigen: der Benutzer kann ihn nicht aendern
+    - name: Verzeichnis fuer zentrale authorized_keys anlegen
+      ansible.builtin.file:
+        path: /etc/ssh/authorized_keys
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Schluessel nur aus VPN/Stallnetz und ohne Zusatzrechte erlauben
+      ansible.builtin.copy:
+        dest: "/etc/ssh/authorized_keys/{{ backup_user }}"
         owner: root
         group: root
         mode: "0644"
-        backup: true
-        validate: testparm -s %s
-      notify: Restart smbd
+        content: |
+          from="{{ backup_allowed_networks | join(',') }}",restrict {{ backup_pub }}
 
-    - name: Pruefen, ob der Samba-Benutzer existiert
-      ansible.builtin.command: pdbedit -L -u {{ backup_user }}
-      register: backup_pdbedit
-      changed_when: false
-      failed_when: false
-
-    - name: Samba-Passwort setzen
-      ansible.builtin.shell: |
-        set -o pipefail
-        printf '%s\n%s\n' "$PW" "$PW" | smbpasswd -s -a {{ backup_user }}
-      args:
-        executable: /bin/bash
-      environment:
-        PW: "{{ backup_password }}"
-      no_log: true
-      when: backup_pdbedit.rc != 0 or backup_reset_password | bool
-
-    # smbd soll erst nach wg0 starten und bei einem Neustart von WireGuard mit neu starten
-    - name: systemd-Drop-in-Verzeichnis fuer smbd anlegen
+    # sshd -t (Validierung) braucht /run/sshd; bei Socket-Aktivierung fehlt es evtl. noch
+    - name: Privilege-Separation-Verzeichnis sicherstellen
       ansible.builtin.file:
-        path: /etc/systemd/system/smbd.service.d
+        path: /run/sshd
         state: directory
+        owner: root
+        group: root
         mode: "0755"
 
-    - name: smbd an WireGuard koppeln
-      ansible.builtin.copy:
-        dest: /etc/systemd/system/smbd.service.d/wireguard.conf
-        mode: "0644"
-        content: |
-          [Unit]
-          After=wg-quick@{{ wg_interface }}.service
-          Wants=wg-quick@{{ wg_interface }}.service
-          PartOf=wg-quick@{{ wg_interface }}.service
-      notify: Restart smbd
+    # Match-Block ans Ende der Hauptdatei (ein Match in sshd_config.d/ koennte
+    # spaetere Einstellungen mit erfassen)
+    - name: SFTP-only-Regeln fuer den Backup-Benutzer in sshd_config
+      ansible.builtin.blockinfile:
+        path: /etc/ssh/sshd_config
+        insertafter: EOF
+        marker: "# {mark} ANSIBLE MANAGED: Home-Assistant-Backup (SFTP)"
+        block: |
+          Match User {{ backup_user }}
+              AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+              AuthenticationMethods publickey
+              PasswordAuthentication no
+              KbdInteractiveAuthentication no
+              ChrootDirectory {{ backup_chroot }}
+              ForceCommand internal-sftp
+              AllowTcpForwarding no
+              AllowStreamLocalForwarding no
+              AllowAgentForwarding no
+              X11Forwarding no
+              PermitTunnel no
+              PermitTTY no
+        validate: /usr/sbin/sshd -t -f %s
+        backup: true
+      notify: Reload ssh
 
-    - name: nmbd (NetBIOS) abschalten, wird nicht gebraucht
-      ansible.builtin.systemd:
-        name: nmbd
-        enabled: false
-        state: stopped
-      failed_when: false
+    - name: Prüfen, ob AllowUsers/AllowGroups den Backup-Benutzer aussperrt
+      ansible.builtin.shell: /usr/sbin/sshd -T -C user={{ backup_user }},host=ha,addr=10.8.0.1 | grep -Ei '^(allowusers|allowgroups) ' || true
+      register: backup_allow
+      changed_when: false
 
-    - name: SMB (tcp/445) nur aus dem VPN erlauben
-      ansible.builtin.iptables:
-        chain: INPUT
-        in_interface: "{{ wg_interface }}"
-        protocol: tcp
-        destination_port: "445"
-        ctstate: NEW
-        jump: ACCEPT
-        action: insert
-        rule_num: "1"
-        comment: "Allow SMB from VPN"
-
-    - name: smbd aktivieren und starten
-      ansible.builtin.systemd:
-        name: smbd
-        enabled: true
-        state: started
-        daemon_reload: true
+    - name: Warnung bei AllowUsers/AllowGroups
+      ansible.builtin.debug:
+        msg: "Achtung: {{ backup_allow.stdout }} – {{ backup_user }} dort ergänzen, sonst schlägt der Login fehl."
+      when: backup_allow.stdout | length > 0
 
     - name: Freien Speicherplatz anzeigen
-      ansible.builtin.command: df -h {{ backup_path }}
+      ansible.builtin.command: df -h {{ backup_chroot }}
       register: backup_df
       changed_when: false
 
-    - name: Hinweis fuer Home Assistant
+    - name: Hinweis für Home Assistant
       ansible.builtin.debug:
         msg:
-          - "Server: {{ wg_address | default('10.8.0.1') | regex_replace('/.*$', '') }}  Freigabe: {{ backup_share }}  Benutzer: {{ backup_user }}"
+          - "Host: 10.8.0.1  Port: 22  Benutzer: {{ backup_user }}  Verzeichnis: /{{ backup_dir_name }}"
+          - "{{ 'Private Key: ' ~ backup_key_dir ~ '/id_ed25519 (in HA hochladen, danach auf dem vServer löschen)' if backup_public_key | length == 0 else 'Eigener Public Key verwendet' }}"
           - "{{ backup_df.stdout_lines }}"
 
   handlers:
-    - name: Restart smbd
+    - name: Reload ssh
       ansible.builtin.systemd:
-        name: smbd
-        state: restarted
-        daemon_reload: true
+        name: ssh
+        state: reloaded
