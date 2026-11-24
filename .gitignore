@@ -1,0 +1,5 @@
+peers.yml
+privatekey
+*.key
+id_ed25519
+docs/wireguard-clients/*.conf

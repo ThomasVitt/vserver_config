@@ -1,0 +1,15 @@
+---
+wg_interface: wg0
+wg_port: 51820
+wg_address: 10.8.0.1/24
+wg_subnet: 10.8.0.0/24
+# Netzwerkinterface mit Internetzugang (leer = automatisch ermitteln)
+wg_external_interface: ""
+# TCP-Ports, die in iptables erlaubt werden (SSH, HTTP, HTTPS)
+wg_allowed_tcp_ports: [22, 80, 443]
+# wireguard-go Logging (nur im Userspace-Modus): verbose zeigt Handshakes aller Peers
+wg_go_log_level: verbose   # verbose | error | silent
+wg_go_log_file: /var/log/wireguard-go.log
+
+# Peers (Clients) werden in group_vars/vserver.yml gepflegt
+wg_peers: []

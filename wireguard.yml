@@ -1,0 +1,7 @@
+---
+# WireGuard-Server (inkl. iptables-Firewall) auf Ubuntu 24.04
+- name: WireGuard-Server einrichten
+  hosts: vserver
+  become: true
+  roles:
+    - wireguard

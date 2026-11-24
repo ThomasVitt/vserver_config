@@ -1,0 +1,14 @@
+---
+backup_user: habackup
+# Chroot-Verzeichnis (muss root gehoeren); darin "backups" fuer den Benutzer
+backup_chroot: /srv/backup/homeassistant
+backup_dir_name: backups
+# Netze, aus denen der Schluessel funktioniert. Home Assistant kommt je nach NAT des Pi
+# mit 10.8.0.x oder mit seiner 192.168.170.x-Adresse an.
+backup_allowed_networks:
+  - 10.8.0.0/24
+  - 192.168.170.0/24
+# Schluesselpaar wird auf dem vServer erzeugt; den Private Key in Home Assistant hochladen
+# und danach hier loeschen. Alternativ eigenen Public Key setzen: -e backup_public_key="ssh-ed25519 ..."
+backup_key_dir: /root/ha-backup-key
+backup_public_key: ""

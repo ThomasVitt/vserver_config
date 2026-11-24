@@ -10,7 +10,7 @@ FRITZ!Box eine statische Route: Netz 10.8.0.0/24 -> Gateway <LAN-IP des Pi>.
 Test im Terminal-Add-on von Home Assistant: `ping 10.8.0.1`
 
 ## vServer
-    ansible-playbook -i ../wireguard/inventory.ini backup.yml
+    ansible-playbook homeassistant_backup.yml
 
 Das Playbook erzeugt /root/ha-backup-key/id_ed25519 (ohne Passphrase, das verlangt HA).
 Datei auf den Rechner holen, in HA hochladen, danach auf dem vServer loeschen:

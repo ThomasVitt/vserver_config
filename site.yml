@@ -1,0 +1,4 @@
+---
+# Alles auf einmal: ansible-playbook site.yml
+- import_playbook: wireguard.yml
+- import_playbook: homeassistant_backup.yml

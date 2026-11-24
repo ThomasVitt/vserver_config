@@ -1,0 +1,140 @@
+---
+- name: OpenSSH-Server installieren
+  ansible.builtin.apt:
+    name: openssh-server
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# '*' statt gesperrtem Passwort: kein Passwort-Login moeglich, Schluessel-Login aber erlaubt
+- name: Systembenutzer fuer Backups anlegen (keine Shell, kein Passwort)
+  ansible.builtin.user:
+    name: "{{ backup_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ backup_chroot }}"
+    create_home: false
+    password: "*"
+
+- name: Chroot-Verzeichnis anlegen (root-eigen, Pflicht fuer ChrootDirectory)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /srv/backup
+    - "{{ backup_chroot }}"
+
+- name: Beschreibbares Backup-Verzeichnis anlegen
+  ansible.builtin.file:
+    path: "{{ backup_chroot }}/{{ backup_dir_name }}"
+    state: directory
+    owner: "{{ backup_user }}"
+    group: "{{ backup_user }}"
+    mode: "0700"
+
+- name: Verzeichnis fuer das Schluesselpaar anlegen
+  ansible.builtin.file:
+    path: "{{ backup_key_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: backup_public_key | length == 0
+
+# Home Assistant verlangt einen Schluessel ohne Passphrase
+- name: Schluesselpaar erzeugen (nur falls nicht vorhanden)
+  ansible.builtin.command: >-
+    ssh-keygen -t ed25519 -N "" -C "homeassistant-backup"
+    -f {{ backup_key_dir }}/id_ed25519
+  args:
+    creates: "{{ backup_key_dir }}/id_ed25519.pub"
+  when: backup_public_key | length == 0
+
+- name: Erzeugten Public Key einlesen
+  ansible.builtin.slurp:
+    src: "{{ backup_key_dir }}/id_ed25519.pub"
+  register: backup_generated_pub
+  when: backup_public_key | length == 0
+
+- name: Zu verwendenden Public Key festlegen
+  ansible.builtin.set_fact:
+    backup_pub: >-
+      {{ backup_public_key if backup_public_key | length > 0
+         else (backup_generated_pub.content | b64decode | trim) }}
+
+# authorized_keys ausserhalb des Chroot, root-eigen: der Benutzer kann ihn nicht aendern
+- name: Verzeichnis fuer zentrale authorized_keys anlegen
+  ansible.builtin.file:
+    path: /etc/ssh/authorized_keys
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schluessel nur aus VPN/Stallnetz und ohne Zusatzrechte erlauben
+  ansible.builtin.copy:
+    dest: "/etc/ssh/authorized_keys/{{ backup_user }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      from="{{ backup_allowed_networks | join(',') }}",restrict {{ backup_pub }}
+
+# sshd -t (Validierung) braucht /run/sshd; bei Socket-Aktivierung fehlt es evtl. noch
+- name: Privilege-Separation-Verzeichnis sicherstellen
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Match-Block ans Ende der Hauptdatei (ein Match in sshd_config.d/ koennte
+# spaetere Einstellungen mit erfassen)
+- name: SFTP-only-Regeln fuer den Backup-Benutzer in sshd_config
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    insertafter: EOF
+    marker: "# {mark} ANSIBLE MANAGED: Home-Assistant-Backup (SFTP)"
+    block: |
+      Match User {{ backup_user }}
+          AuthorizedKeysFile /etc/ssh/authorized_keys/%u
+          AuthenticationMethods publickey
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          ChrootDirectory {{ backup_chroot }}
+          ForceCommand internal-sftp
+          AllowTcpForwarding no
+          AllowStreamLocalForwarding no
+          AllowAgentForwarding no
+          X11Forwarding no
+          PermitTunnel no
+          PermitTTY no
+    validate: /usr/sbin/sshd -t -f %s
+    backup: true
+  notify: Reload ssh
+
+- name: Prüfen, ob AllowUsers/AllowGroups den Backup-Benutzer aussperrt
+  ansible.builtin.shell: /usr/sbin/sshd -T -C user={{ backup_user }},host=ha,addr=10.8.0.1 | grep -Ei '^(allowusers|allowgroups) ' || true
+  register: backup_allow
+  changed_when: false
+
+- name: Warnung bei AllowUsers/AllowGroups
+  ansible.builtin.debug:
+    msg: "Achtung: {{ backup_allow.stdout }} – {{ backup_user }} dort ergänzen, sonst schlägt der Login fehl."
+  when: backup_allow.stdout | length > 0
+
+- name: Freien Speicherplatz anzeigen
+  ansible.builtin.command: df -h {{ backup_chroot }}
+  register: backup_df
+  changed_when: false
+
+- name: Hinweis für Home Assistant
+  ansible.builtin.debug:
+    msg:
+      - "Host: 10.8.0.1  Port: 22  Benutzer: {{ backup_user }}  Verzeichnis: /{{ backup_dir_name }}"
+      - "{{ 'Private Key: ' ~ backup_key_dir ~ '/id_ed25519 (in HA hochladen, danach auf dem vServer löschen)' if backup_public_key | length == 0 else 'Eigener Public Key verwendet' }}"
+      - "{{ backup_df.stdout_lines }}"

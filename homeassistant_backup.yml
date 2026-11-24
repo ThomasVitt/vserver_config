@@ -1,0 +1,7 @@
+---
+# SFTP-Backup-Ziel fuer Home Assistant (Integration "SFTP Storage")
+- name: SFTP-Backup-Ziel fuer Home Assistant einrichten
+  hosts: vserver
+  become: true
+  roles:
+    - homeassistant_backup
